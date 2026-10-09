@@ -47,7 +47,7 @@ class PersonalPreferencesController
     private function events($store): array
     {
         $saved = $store->get('events', []);
-        $defaults = ['started' => true, 'stopped' => true, 'restarted' => true, 'provision' => true, 'install' => true, 'reinstall' => true, 'backup' => true, 'failed' => true];
+        $defaults = ['started' => true, 'stopped' => true, 'restarted' => true, 'crashed' => true, 'recovered' => true, 'provision' => true, 'install' => true, 'reinstall' => true, 'backup' => true, 'failed' => true];
         return array_replace($defaults, is_array($saved) ? array_intersect_key($saved, $defaults) : []);
     }
 

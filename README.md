@@ -1,53 +1,91 @@
-# Discord Event Notifier v1.2.3 — by Teo
+# Discord Event Notifier
 
-Pterodactyl 2.0 extension with separate administrator and server-owner Discord webhooks.
+Discord notifications for **Pterodactyl 2.0**, created by **Teo**.
 
-## What it includes
-- Administrator webhook and operation notifications from v1.0.0.
-- Account → Discord Notifications page for every server owner.
-- One encrypted webhook per user and optional encrypted overrides per owned server.
-- User-selectable events, server opt-in/out, and a rate-limited test endpoint.
-- Existing v1.1.0 Wings poller (optional; requires cron). Power-state events are sampled and restart is inferred; crash attribution is **not** supported.
-- Server ownership verified by the backend. Subusers do not inherit webhook settings.
-- Discord requests use HTTPS, strict host/path validation, no redirects, and no mentions.
+## Version 1.3.0 (crash detection preview)
 
-## Important
-This build was prepared against the published Pterodactyl 2.0 extension API but **has not been integration-tested on a live Panel**. Use a staging Panel first, or make backups of database and extensions before updating. The frontend is a native JS module loaded through the Panel import map; SDK runtime compatibility must be verified using `php artisan p:extension:doctor` and a browser test.
+Builds on the tested v1.2.3 and adds **evidence-based crash alerts**, **recovery alerts**, a per-server crash counter, and separate admin/user notification toggles for `crashed` and `recovered`.
 
-## UI
-Log in to Pterodactyl and open **Account → Discord Notifications** (`/account/discord-notifications`).
-The global settings are at Admin → Extensions → Discord Event Notifier → Settings.
+### Features
 
-## First deployment / update
-Do not install this over a production v1.0.0 without checking the currently supported upgrade workflow for your exact Panel build. Keep the old .pteroext and backup the Panel database. You can verify package files with `php artisan p:extension:doctor extensions/discord-event-notifier` on a staging copy.
+- Admin Discord webhook and optional full-server UUID filter
+- Personal webhooks for server owners, with optional per-server webhook overrides
+- Owner-controlled event and server notification switches
+- Installation, reinstall, provisioning, and backup operation notifications
+- Wings state notifications: Started, Stopped, Restart Detected (uptime inference)
+- **Server Crashed**, only when a *new* explicit Wings crash marker is visible in recent server console logs
+- **Server Recovered**, when Wings reports Running after such a confirmed crash marker
+- Per-server crash count (stored internally and included in crash messages)
+- Rolling log fingerprints to suppress repeated alerts for the same visible log entry
+- No changes to Panel core files, Wings or game server processes
 
-## Polling
-Only if you enable `Monitor Wings power state` in admin settings:
-`* * * * * cd /var/www/pterodactyl && /usr/bin/php artisan discord-notifier:poll >> /var/log/discord-event-notifier.log 2>&1`
-The first poll records the baseline silently. Cron is NOT required for operations or for test webhooks.
+### Important limitations
 
-## Notes
-The personal webhook does not depend on the administrator webhook being enabled. Server owners can receive provision/install/reinstall/backup events, provided the administrator permits personal webhooks. Power event collection is enabled/disabled globally via `monitor_power`. For performance with many servers, polling on a single node may need optimization.
+**Crash detection is not comprehensive.** Wings' `ServerClient::logs(100)` is a capped snapshot of recent console output, not a durable crash-event feed. If Wings does not expose its crash message in those lines, or the log rotates/overflows between checks, **no crash notification is emitted**. No heuristic based only on offline state or uptime is labelled as a crash. Log messages may also be game-generated and cannot be cryptographically authenticated as Wings messages.
 
+Recovery is inferred from a previously observed crash marker and the Running state. A crash that restarts between one-minute checks may be detected if its marker is retained in the last 100 lines, but can still be missed. Each match window increments the crash counter once, not once per crash during the window. A user-initiated in-game restart can sometimes be treated as a crash by Wings itself.
 
-## v1.2.1 compatibility fix
+The first log snapshot after enabling a server is used as a silent baseline. If no overlap between successive capped log snapshots is found, the new snapshot is also treated as a silent baseline to avoid replaying historical log lines.
 
-Use the underlying `ExtensionSettings` store for owner/server-scoped settings (`forUser`, `forServer`). Keep global settings on the registered definitions. Fixes `Unknown extension setting "events"` on account settings load and missing `set`/`setSecret`/`forget` methods on save. No database schema changes.
+**v1.3.0 is an unverified candidate:** PHP lint/ZIP checks are not equivalent to live Wings integration testing. Test on a non-production Panel first.
 
-## v1.2.2 Wings compatibility fix
+## Installation
 
-- Replaces the removed `DaemonServerRepository` with the Pterodactyl 2.0 `DaemonManager::server($server)->details()` API.
-- Reads the Wings response as returned by `ServerClient::details()`.
-- Normalizes `stopped` to `offline` and ignores intermediate states (`starting`, `stopping`) while comparing stable observations.
-- Keeps existing settings and database records; no schema changes.
-- The first successful observation creates a baseline without a message. A server that stops and restarts between polls may be missed. A crash cannot be reliably differentiated from a user-initiated stop.
-- This package has passed local PHP syntax and ZIP integrity checks, but must be verified on the target Panel using `p:extension:doctor` and a live stop/start test.
+1. Back up the Panel database and the installed extension directory.
+2. Upload `discord-event-notifier-v1.3.0.pteroext` to the Panel host.
+3. Unpack the archive to a temporary directory and validate:
 
-## v1.2.3 verified Wings state shape fix
+```bash
+mkdir -p /root/discord-notifier-check-130
+unzip -oq /root/discord-event-notifier-v1.3.0.pteroext -d /root/discord-notifier-check-130
+cd /var/www/pterodactyl
+php artisan p:extension:doctor /root/discord-notifier-check-130
+```
 
-- Reads `state` and `utilization.uptime` from the **top-level** array returned by `DaemonManager::server($server)->details()`, not `data.state` or `data.utilization.uptime`.
-- Preserves existing power observations and all global, personal, and per-server webhook preferences. No migrations or changes to core Panel files.
-- On an existing installation, replace the extension package in place (`--replace --enable`). Reinstalling or removing the extension is unnecessary.
-- Polling is still optional and is activated by the administrator's `Monitor Wings power state` setting plus a **single** system cron. Do not add a duplicate cron if already present.
-- Verified through operator testing on Pterodactyl 2.0: `Restart Detected`, `Server Stopped`, and `Server Started` Discord messages were received after manually correcting these data paths. Package-level integration testing on a production Panel remains necessary.
-- `Restart Detected` is an uptime inference rather than proof of a user restart request; transitions between samples can be missed.
+4. If the checks pass, install/upgrade using:
+
+```bash
+php artisan p:extension:install /root/discord-event-notifier-v1.3.0.pteroext --replace --enable
+php artisan p:extension:list
+```
+
+5. Configure the **Admin → Extensions → Discord Event Notifier → Settings** webhook and enable `Monitor Wings power state (requires cron)`. Enable/disable `Server crashed` and `Server recovered` independently.
+6. Server owners can open **Account → Discord Notifications** to set their personal webhook and choose events.
+
+## Cron (manual)
+
+The extension **does not install a cron automatically**. If the Panel host already has the following job, **do not add it twice**:
+
+```cron
+* * * * * /usr/bin/flock -n /tmp/discord-notifier.lock /usr/bin/php /var/www/pterodactyl/artisan discord-notifier:poll >> /var/log/discord-notifier.log 2>&1
+```
+
+Paths may vary between installations. `artisan schedule:run` does **not** automatically run this extension command.
+
+## Monitoring and troubleshooting
+
+```bash
+cd /var/www/pterodactyl
+php artisan discord-notifier:poll -v
+php artisan p:extension:list
+crontab -l | grep discord-notifier
+```
+
+Server poll failures may appear in `storage/logs/laravel-YYYY-MM-DD.log`. An exit code of `0` does not guarantee every server was queried: the extension catches and logs per-server errors. The initial pass seeds its state and log baseline without sending old alerts.
+
+Check Wings console history if a known crash produces no notification. Only explicit Wings crash strings such as `Detected server process in a crashed state` / `Server detected as crashed` can trigger detection. Do not share secret Discord webhook URLs in logs or screenshots.
+
+## Change log
+
+- **1.3.0**: Conservative Wings crash/recovery detection, crash counter, deduplication, configurable crash/recovery notifications.
+- **1.2.3**: Verified Wings state polling for `state` and `utilization.uptime` in Pterodactyl 2.0.
+- **1.2.1**: Corrected account preferences storage handling.
+- **1.2.0**: Added per-user and per-server Discord webhook settings.
+
+## Author
+
+**Teo**
+
+## Distribution note
+
+This source archive contains the deployable PHP and browser bundle of this extension, rather than the original React build project. The v1.3.0 crash detector is experimental and has not been validated on a live Wings instance.

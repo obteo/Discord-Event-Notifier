@@ -20,6 +20,64 @@ class PollServerStates extends Command
     protected $signature = 'discord-notifier:poll';
     protected $description = 'Check Wings server power states and notify Discord about changes.';
 
+    /**
+     * Experimental: the Wings logs endpoint returns a bounded console snapshot,
+     * not a reliable event feed. If its return shape is unknown, skip quietly.
+     */
+    private function checkCrashEvidence(Server $server, string $state, ExtensionSettings $store, DiscordNotifier $notifier): void
+    {
+        try {
+            $result = app(DaemonManager::class)->server($server)->logs(100);
+            // Support a list of lines or a validated payload with a logs/data field.
+            if (is_string($result)) {
+                $lines = preg_split('/\r?\n/', $result);
+            } elseif (is_array($result)) {
+                $raw = $result['logs'] ?? $result['data'] ?? $result;
+                $lines = is_string($raw) ? preg_split('/\r?\n/', $raw) : (is_array($raw) ? $raw : []);
+            } else {
+                return;
+            }
+            $lines = array_values(array_filter($lines, 'is_string'));
+            $lines = array_values(array_filter(array_map('trim', $lines), fn ($line) => $line !== ''));
+            if (!$lines) return;
+            // Store only bounded fingerprints, never full console output or secrets.
+            $fingerprints = array_map(fn ($line) => hash('sha256', $line), $lines);
+            $previous = $store->get('crash_log_fingerprints');
+            $store->set('crash_log_fingerprints', array_slice($fingerprints, -100));
+            if (!is_array($previous) || !$previous) return;
+            // A known fingerprint must overlap; otherwise avoid reporting old log entries.
+            $previousSet = array_fill_keys(array_filter($previous, 'is_string'), true);
+            $overlap = -1;
+            foreach ($fingerprints as $idx => $fingerprint) {
+                if (isset($previousSet[$fingerprint])) $overlap = $idx;
+            }
+            if ($overlap < 0) return;
+            $marker = false;
+            foreach (array_slice($lines, $overlap + 1) as $line) {
+                if (preg_match('/(?:detected server process in a crashed state|server detected as crashed)/i', $line)) {
+                    $marker = true;
+                    break;
+                }
+            }
+            $pending = (bool) $store->get('crash_recovery_pending', false);
+            if ($marker && !$pending) {
+                $count = (int) $store->get('crash_count', 0) + 1;
+                $store->set('crash_count', $count);
+                $store->set('crash_recovery_pending', true);
+                $notifier->sendCrash($server, $count);
+                $pending = true;
+            }
+            if ($pending && $state === 'running' && !$marker) {
+                $store->set('crash_recovery_pending', false);
+                $notifier->sendRecovery($server, (int) $store->get('crash_count', 0));
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Discord Event Notifier crash log probe failed', [
+                'server_uuid' => $server->uuid, 'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
     public function handle(ExtensionSettingsRegistry $registry, DiscordNotifier $notifier): int
     {
         $settings = $registry->get('discord-event-notifier');
@@ -67,6 +125,9 @@ class PollServerStates extends Command
                                 $notifier->sendPowerState($server, 'restarted');
                             }
                         }
+                        // Crash recognition uses only NEW lines from a capped console snapshot.
+                        // Initial and non-overlapping snapshots are silently baselined.
+                        $this->checkCrashEvidence($server, $state, $store, $notifier);
                         $store->set('power_observation', $current);
                     } catch (\Throwable $e) {
                         // Do not interpret a Wings timeout as a server shutdown.

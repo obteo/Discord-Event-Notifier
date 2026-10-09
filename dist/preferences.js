@@ -2,7 +2,7 @@ import React from 'react';
 import { http } from '@pterodactyl/sdk';
 const h = React.createElement;
 const API = '/api/client/extensions/discord-event-notifier/preferences';
-const options = ['started','stopped','restarted','provision','install','reinstall','backup','failed'];
+const options = ['started','stopped','restarted','crashed','recovered','provision','install','reinstall','backup','failed'];
 const title = x => x === 'restarted' ? 'Restart detected' : x[0].toUpperCase()+x.slice(1);
 const panel = {background:'#202a36', color:'#e5e7eb', padding:20, borderRadius:8, marginBottom:16};
 const field = {padding:9,borderRadius:6,background:'#111b27',color:'#f9fafb',border:'1px solid #596474',width:'100%',boxSizing:'border-box'};

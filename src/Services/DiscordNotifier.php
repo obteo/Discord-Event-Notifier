@@ -49,6 +49,37 @@ class DiscordNotifier
         $this->postPersonal($server, $embed, $event);
     }
 
+    /** Notify only on explicit crash evidence; absence of evidence is never a crash. */
+    public function sendCrash(Server $server, int $count): void
+    {
+        $this->sendEvidenceEvent($server, 'crashed', 'Server Crashed',
+            'An explicit crash marker was found in recent Wings console history (experimental detection).',
+            0xef4444, $count);
+    }
+
+    public function sendRecovery(Server $server, int $count): void
+    {
+        $this->sendEvidenceEvent($server, 'recovered', 'Server Recovered',
+            'Wings reports Running after a previously detected crash marker.',
+            0x22c55e, $count);
+    }
+
+    private function sendEvidenceEvent(Server $server, string $event, string $title, string $description, int $color, int $count): void
+    {
+        $embed = [
+            'title' => $title,
+            'description' => $description,
+            'color' => $color,
+            'fields' => [
+                ['name' => 'Server', 'value' => $this->sanitize($server->name), 'inline' => true],
+                ['name' => 'Detected crashes', 'value' => (string) $count, 'inline' => true],
+                ['name' => 'Server UUID', 'value' => '`'.$server->uuid.'`', 'inline' => false],
+            ],
+        ];
+        if ($this->option('enabled') && $this->option('monitor_power') && $this->allowsServer($server->uuid) && $this->option('notify_'.$event)) $this->post($embed);
+        $this->postPersonal($server, $embed, $event);
+    }
+
     public function sendOperation(OperationCompleted $event): void
     {
         if (!in_array($event->operation, ['provision', 'install', 'reinstall', 'backup'], true)) return;

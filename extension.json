@@ -1,13 +1,13 @@
 {
   "id": "discord-event-notifier",
   "name": "Discord Event Notifier",
-  "version": "1.2.3",
+  "version": "1.3.0",
   "requires": {
     "panel": "^2.0.0-dev",
     "php": "^8.3",
     "sdk": "^2.0.0-beta.4"
   },
-  "description": "Discord notifications with personal webhook settings for each server owner and optional per-server overrides.",
+  "description": "Discord notifications, user webhooks, and experimental evidence-based Wings crash alerts.",
   "author": "Teo",
   "icon": "bell-ring",
   "provider": "DiscordEventNotifier\\DiscordEventNotifierProvider",

@@ -46,6 +46,10 @@ class DiscordEventNotifierProvider extends ExtensionProvider
                 ->label('Server stopped (reason unknown)')->field('toggle'),
             ExtensionSettingDefinition::make('notify_restarted', 'notify_restarted', true, ['boolean'])
                 ->label('Server restarted (inferred from uptime)')->field('toggle'),
+            ExtensionSettingDefinition::make('notify_crashed', 'notify_crashed', true, ['boolean'])
+                ->label('Server crashed (experimental log detection)')->field('toggle'),
+            ExtensionSettingDefinition::make('notify_recovered', 'notify_recovered', true, ['boolean'])
+                ->label('Server recovered after detected crash')->field('toggle'),
             ExtensionSettingDefinition::make('notify_failed', 'notify_failed', true, ['boolean'])
                 ->label('Failed operations')->field('toggle'),
         ]));
