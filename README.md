@@ -1,6 +1,6 @@
-# Discord Event Notifier v1.3.3 — Wings Crash Agent Preview
+# Discord Event Notifier v1.3.3 — Wings Crash Agent
 
-**By Teo** · Pterodactyl 2.0 extension · Experimental/pre-release
+**By Teo** · Pterodactyl 2.0 extension
 
 This build preserves the v1.3.1 user, subuser, admin and per-server Discord webhooks, power monitoring, and operation notifications. It adds a **node-side Wings journal agent** for confirmed crash events, because Wings' process crash messages do not reliably appear in the game console API.
 
