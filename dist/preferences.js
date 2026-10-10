@@ -2,7 +2,7 @@ import React from 'react';
 import { http } from '@pterodactyl/sdk';
 const h = React.createElement;
 const API = '/api/client/extensions/discord-event-notifier/preferences';
-const options = ['started','stopped','restarted','provision','install','reinstall','backup','failed'];
+const options = ['started','stopped','restarted','crashed','recovered','provision','install','reinstall','backup','failed'];
 const title = x => x === 'restarted' ? 'Restart detected' : x[0].toUpperCase()+x.slice(1);
 const panel = {background:'#202a36', color:'#e5e7eb', padding:20, borderRadius:8, marginBottom:16};
 const field = {padding:9,borderRadius:6,background:'#111b27',color:'#f9fafb',border:'1px solid #596474',width:'100%',boxSizing:'border-box'};
@@ -27,7 +27,7 @@ export default function Preferences() {
   if (!data) return h('div',{style:panel},message||'Loading Discord notifications...');
   return h('div',{style:{maxWidth:820,margin:'30px auto',padding:'0 16px'}},
     h('h1',{style:{fontSize:26,marginBottom:8}},'Discord Notifications'),
-    h('p',{style:{opacity:.8}},'Configure your personal Discord webhook and select which of your servers send notifications.'),
+    h('p',{style:{opacity:.8}},'Configure your Discord webhook for servers you own or have been granted Discord Notifications permission to manage.'),
     message && h('p',{role:'status',style:{padding:12,border:'1px solid #6b7280',borderRadius:6}},message),
     h('section',{style:panel},h('h2',null,'Personal webhook'),
       toggle('Enable my notifications',data.enabled,v=>setData({...data,enabled:v})),
@@ -37,8 +37,8 @@ export default function Preferences() {
       h('button',{style:button,disabled:busy,onClick:()=>test(null)},'Test personal webhook')),
     h('section',{style:panel},h('h2',null,'Events'),...options.map(ev=>toggle(title(ev),data.events[ev]!==false,v=>setData({...data,events:{...data.events,[ev]:v}})))),
     h('section',{style:panel},h('h2',null,'My servers'),
-      data.servers.length===0?h('p',null,'You do not own any servers.'):data.servers.map(s=>h('div',{key:s.uuid,style:{borderTop:'1px solid #465366',padding:'14px 0'}},
-        h('strong',null,s.name),h('div',{style:{fontSize:12,opacity:.7}},s.uuid),
+      data.servers.length===0?h('p',null,'No authorized servers. Ask the server owner to enable Discord Notifications → Manage in your subuser permissions.'):data.servers.map(s=>h('div',{key:s.uuid,style:{borderTop:'1px solid #465366',padding:'14px 0'}},
+        h('strong',null,s.name),h('span',{style:{opacity:.75,marginLeft:8,fontSize:12}},s.role === 'subuser' ? '(Subuser)' : '(Owner)'),h('div',{style:{fontSize:12,opacity:.7}},s.uuid),
         toggle('Send notifications',s.enabled,v=>setData({...data,servers:data.servers.map(x=>x.uuid===s.uuid?{...x,enabled:v}:x)})),
         h('p',null,s.has_override?'A server-specific webhook is saved.':'Uses your personal webhook by default.'),
         input('Optional per-server Discord webhook URL',serverSecrets[s.uuid]||'',v=>setServerSecrets({...serverSecrets,[s.uuid]:v})),

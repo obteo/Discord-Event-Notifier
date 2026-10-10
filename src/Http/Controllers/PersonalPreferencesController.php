@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use Pterodactyl\Models\Server;
+use Pterodactyl\Models\User;
 use Pterodactyl\Services\Extensions\ExtensionSettings;
 use Pterodactyl\Services\Extensions\ExtensionSettingsRegistry;
 
@@ -20,9 +21,44 @@ class PersonalPreferencesController
         abort_unless($request->user() !== null, 401);
     }
 
+    private const PERMISSION = 'ext.discord-event-notifier.manage';
+
+    private function canManage(User $user, Server $server): bool
+    {
+        return (int) $server->owner_id === (int) $user->id || $user->can(self::PERMISSION, $server);
+    }
+
     private function servers(Request $request)
     {
-        return Server::query()->where('owner_id', $request->user()->id)->orderBy('name')->get(['id', 'uuid', 'name']);
+        $user = $request->user();
+        // Only servers with an actual owner/subuser relationship. A panel administrator
+        // does not implicitly subscribe to every server just because they are root.
+        $servers = Server::query()
+            ->where(function ($query) use ($user) {
+                $query->where('owner_id', $user->id)
+                    ->orWhereHas('subusers', fn ($q) => $q->where('user_id', $user->id));
+            })->orderBy('name')->get();
+        return $servers->filter(fn (Server $server) => $this->canManage($user, $server))->values();
+    }
+
+    private function userServerStore(User $user): ExtensionSettings
+    {
+        return (new ExtensionSettings('discord-event-notifier'))->forUser($user);
+    }
+
+    private function overrideKey(Server $server): string
+    {
+        return 'server_webhook_'.$server->uuid;
+    }
+
+    private function overrideExists(User $user, Server $server): bool
+    {
+        if ((string) $this->userServerStore($user)->get($this->overrideKey($server), '') !== '') return true;
+        if ((int) $server->owner_id !== (int) $user->id) return false;
+        // Preserve existing v1.2.x owner overrides.
+        $legacy = (new ExtensionSettings('discord-event-notifier'))->forServer($server);
+        return (int) $legacy->get('personal_webhook_owner_id', 0) === (int) $user->id
+            && (string) $legacy->get('personal_webhook_url', '') !== '';
     }
 
     public function show(Request $request): JsonResponse
@@ -33,7 +69,8 @@ class PersonalPreferencesController
             'uuid' => $server->uuid,
             'name' => $server->name,
             'enabled' => (bool) data_get($store->get('server_enabled', []), $server->uuid, true),
-            'has_override' => (int) (new ExtensionSettings('discord-event-notifier'))->forServer($server)->get('personal_webhook_owner_id', 0) === (int) $request->user()->id && (bool) (new ExtensionSettings('discord-event-notifier'))->forServer($server)->get('personal_webhook_url', ''),
+            'role' => (int) $server->owner_id === (int) $request->user()->id ? 'owner' : 'subuser',
+            'has_override' => $this->overrideExists($request->user(), $server),
         ]);
         // Personal server override URLs are never returned, even encrypted ones.
         return response()->json([
@@ -47,7 +84,7 @@ class PersonalPreferencesController
     private function events($store): array
     {
         $saved = $store->get('events', []);
-        $defaults = ['started' => true, 'stopped' => true, 'restarted' => true, 'provision' => true, 'install' => true, 'reinstall' => true, 'backup' => true, 'failed' => true];
+        $defaults = ['started' => true, 'stopped' => true, 'restarted' => true, 'crashed' => true, 'recovered' => true, 'provision' => true, 'install' => true, 'reinstall' => true, 'backup' => true, 'failed' => true];
         return array_replace($defaults, is_array($saved) ? array_intersect_key($saved, $defaults) : []);
     }
 
@@ -68,7 +105,7 @@ class PersonalPreferencesController
         $owned = $this->servers($request)->keyBy('uuid');
         $incoming = $data['servers'];
         foreach ($incoming as $uuid => $value) {
-            abort_unless(is_string($uuid) && $owned->has($uuid), 403, 'You can only configure servers you own.');
+            abort_unless(is_string($uuid) && $owned->has($uuid), 403, 'You can only configure servers for which you have Discord Notifications permission.');
             foreach (['webhook_url'] as $key) {
                 if (!empty($value[$key])) $this->notifier->validateWebhook($value[$key]);
             }
@@ -90,14 +127,20 @@ class PersonalPreferencesController
         foreach ($incoming as $uuid => $item) {
             $server = $owned->get($uuid);
             $flags[$uuid] = (bool) $item['enabled'];
-            $scoped = (new ExtensionSettings('discord-event-notifier'))->forServer($server);
-            // A server can have only one owner, so its private override follows the owner, not subusers.
+            // Per-user, per-server encrypted override; never shared with another subuser.
+            $key = $this->overrideKey($server);
             if (!empty($item['remove_override'])) {
-                $scoped->forget('personal_webhook_url');
-                $scoped->forget('personal_webhook_owner_id');
+                $store->forget($key);
+                // Old owner overrides remain supported until explicitly removed.
+                if ((int) $server->owner_id === (int) $request->user()->id) {
+                    $legacy = (new ExtensionSettings('discord-event-notifier'))->forServer($server);
+                    if ((int) $legacy->get('personal_webhook_owner_id', 0) === (int) $request->user()->id) {
+                        $legacy->forget('personal_webhook_url');
+                        $legacy->forget('personal_webhook_owner_id');
+                    }
+                }
             } elseif (!empty($item['webhook_url'])) {
-                $scoped->setSecret('personal_webhook_url', $item['webhook_url']);
-                $scoped->set('personal_webhook_owner_id', (int) $request->user()->id);
+                $store->setSecret($key, $item['webhook_url']);
             }
         }
         $store->set('server_enabled', array_intersect_key($flags, $owned->all()));
@@ -113,7 +156,8 @@ class PersonalPreferencesController
         $data = $request->validate(['server_uuid' => ['nullable', 'string', 'max:36']]);
         $server = null;
         if (!empty($data['server_uuid'])) {
-            $server = Server::query()->where('owner_id', $request->user()->id)->where('uuid', $data['server_uuid'])->firstOrFail();
+            $server = $this->servers($request)->firstWhere('uuid', $data['server_uuid']);
+            abort_unless($server !== null, 403, 'Discord Notifications permission is required for this server.');
         }
         $this->notifier->sendPersonalTest($request->user(), $server);
         return response()->json(['success' => true]);

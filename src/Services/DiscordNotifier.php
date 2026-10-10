@@ -49,6 +49,37 @@ class DiscordNotifier
         $this->postPersonal($server, $embed, $event);
     }
 
+    /** Notify only on explicit crash evidence; absence of evidence is never a crash. */
+    public function sendCrash(Server $server, int $count): void
+    {
+        $this->sendEvidenceEvent($server, 'crashed', 'Server Crashed',
+            'Wings detected the server process entering a crashed state (signed node event).',
+            0xef4444, $count);
+    }
+
+    public function sendRecovery(Server $server, int $count): void
+    {
+        $this->sendEvidenceEvent($server, 'recovered', 'Server Recovered',
+            'Wings reports Running after a confirmed crash event.',
+            0x22c55e, $count);
+    }
+
+    private function sendEvidenceEvent(Server $server, string $event, string $title, string $description, int $color, int $count): void
+    {
+        $embed = [
+            'title' => $title,
+            'description' => $description,
+            'color' => $color,
+            'fields' => [
+                ['name' => 'Server', 'value' => $this->sanitize($server->name), 'inline' => true],
+                ['name' => 'Detected crashes', 'value' => (string) $count, 'inline' => true],
+                ['name' => 'Server UUID', 'value' => '`'.$server->uuid.'`', 'inline' => false],
+            ],
+        ];
+        if ($this->option('enabled') && $this->option('monitor_power') && $this->allowsServer($server->uuid) && $this->option('notify_'.$event)) $this->post($embed);
+        $this->postPersonal($server, $embed, $event);
+    }
+
     public function sendOperation(OperationCompleted $event): void
     {
         if (!in_array($event->operation, ['provision', 'install', 'reinstall', 'backup'], true)) return;
@@ -97,35 +128,54 @@ class DiscordNotifier
         }
     }
 
+    private const MANAGE_PERMISSION = 'ext.discord-event-notifier.manage';
+
+    private function individualWebhook(User $user, Server $server, ExtensionSettings $store): string
+    {
+        // Personal overrides are stored under the user's own encrypted setting scope.
+        $key = 'server_webhook_'.$server->uuid;
+        $url = (string) $store->get($key, '');
+        if ($url !== '') return $url;
+        if ((int) $server->owner_id === (int) $user->id) {
+            $legacy = (new ExtensionSettings('discord-event-notifier'))->forServer($server);
+            if ((int) $legacy->get('personal_webhook_owner_id', 0) === (int) $user->id) {
+                $url = (string) $legacy->get('personal_webhook_url', '');
+                if ($url !== '') return $url;
+            }
+        }
+        return (string) $store->get('webhook_url', '');
+    }
+
     private function postPersonal(Server $server, array $embed, string $event): void
     {
         if (!$this->option('allow_personal_webhooks')) return;
-        $owner = User::query()->find($server->owner_id);
-        if (!$owner) return;
-        $store = (new ExtensionSettings('discord-event-notifier'))->forUser($owner);
-        if (!$store->get('enabled', false)) return;
-        $events = $store->get('events', []);
-        if (is_array($events) && array_key_exists($event, $events) && !$events[$event]) return;
-        $flags = $store->get('server_enabled', []);
-        if (is_array($flags) && array_key_exists($server->uuid, $flags) && !$flags[$server->uuid]) return;
-        $scoped = (new ExtensionSettings('discord-event-notifier'))->forServer($server);
-        $override = (int) $scoped->get('personal_webhook_owner_id', 0) === (int) $owner->id
-            ? (string) $scoped->get('personal_webhook_url', '') : '';
-        $url = $override ?: (string) $store->get('webhook_url', '');
-        if ($url === '') return;
-        $this->deliver($url, $embed, 'Pterodactyl Notifier');
+        // The server owner receives independent notifications, as do only those
+        // subusers explicitly granted this extension's permission.
+        $ids = [$server->owner_id];
+        foreach ($server->subusers()->get() as $subuser) {
+            if ($subuser->user_id) $ids[] = $subuser->user_id;
+        }
+        foreach (User::query()->whereIn('id', array_unique($ids))->get() as $user) {
+            if ((int) $user->id !== (int) $server->owner_id && !$user->can(self::MANAGE_PERMISSION, $server)) continue;
+            $store = (new ExtensionSettings('discord-event-notifier'))->forUser($user);
+            if (!$store->get('enabled', false)) continue;
+            $events = $store->get('events', []);
+            if (is_array($events) && array_key_exists($event, $events) && !$events[$event]) continue;
+            $flags = $store->get('server_enabled', []);
+            if (is_array($flags) && array_key_exists($server->uuid, $flags) && !$flags[$server->uuid]) continue;
+            $url = $this->individualWebhook($user, $server, $store);
+            if ($url !== '') $this->deliver($url, $embed, 'Pterodactyl Notifier');
+        }
     }
 
     public function sendPersonalTest(User $user, ?Server $server = null): void
     {
-        $store = (new ExtensionSettings('discord-event-notifier'))->forUser($user);
-        $url = (string) $store->get('webhook_url', '');
-        if ($server) {
-            $scoped = (new ExtensionSettings('discord-event-notifier'))->forServer($server);
-            if ((int) $scoped->get('personal_webhook_owner_id', 0) === (int) $user->id) {
-                $url = (string) ($scoped->get('personal_webhook_url', '') ?: $url);
-            }
+        if ($server && (int) $server->owner_id !== (int) $user->id
+            && !$user->can(self::MANAGE_PERMISSION, $server)) {
+            abort(403, 'Discord Notifications permission is required for this server.');
         }
+        $store = (new ExtensionSettings('discord-event-notifier'))->forUser($user);
+        $url = $server ? $this->individualWebhook($user, $server, $store) : (string) $store->get('webhook_url', '');
         if ($url === '') throw \Illuminate\Validation\ValidationException::withMessages(['webhook_url' => 'Save a webhook before testing.']);
         $this->deliver($url, [
             'title' => 'Test notification',

@@ -1,0 +1,19 @@
+[Unit]
+Description=Discord Event Notifier Wings Crash Agent
+After=network-online.target wings.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /opt/discord-wings-agent/wings_crash_agent.py
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/discord-wings-agent
+ReadOnlyPaths=/etc/discord-wings-agent
+
+[Install]
+WantedBy=multi-user.target

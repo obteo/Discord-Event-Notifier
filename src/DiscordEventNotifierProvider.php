@@ -4,6 +4,7 @@ namespace DiscordEventNotifier;
 
 use DiscordEventNotifier\Services\DiscordNotifier;
 use DiscordEventNotifier\Console\PollServerStates;
+use DiscordEventNotifier\Console\ManageNodeKey;
 use Pterodactyl\Extensions\ExtensionProvider;
 use Pterodactyl\Events\Server\OperationCompleted;
 use Pterodactyl\Services\Extensions\ExtensionSettingDefinition;
@@ -14,8 +15,13 @@ class DiscordEventNotifierProvider extends ExtensionProvider
     public function boot(): void
     {
         $this->registerApiRoutes();
+        $this->registerWebRoutes(__DIR__.'/../routes/web.php');
+        // Registered by the extension SDK: visible in the server subuser permission editor.
+        $this->registerPermissions('Discord Notifications', [
+            'manage' => 'Configure personal Discord notifications for this server.',
+        ]);
         if ($this->app->runningInConsole()) {
-            $this->commands([PollServerStates::class]);
+            $this->commands([PollServerStates::class, ManageNodeKey::class]);
         }
         $this->registerSettings(new ExtensionSettingsDefinition($this->settings(), [
             ExtensionSettingDefinition::make('enabled', 'enabled', true, ['boolean'])
@@ -36,7 +42,7 @@ class DiscordEventNotifierProvider extends ExtensionProvider
                 ->label('Backup finished')->field('toggle'),
             ExtensionSettingDefinition::make('allow_personal_webhooks', 'allow_personal_webhooks', true, ['boolean'])
                 ->label('Allow personal Discord webhooks')->field('toggle')
-                ->help('Server owners may configure their own webhook from Account > Discord Notifications.'),
+                ->help('Server owners and authorized subusers may configure personal webhooks from Account > Discord Notifications.'),
             ExtensionSettingDefinition::make('monitor_power', 'monitor_power', false, ['boolean'])
                 ->label('Monitor Wings power state (requires cron)')->field('toggle')
                 ->help('Requires running discord-notifier:poll every minute. First check records a baseline without sending notifications.'),
@@ -46,6 +52,10 @@ class DiscordEventNotifierProvider extends ExtensionProvider
                 ->label('Server stopped (reason unknown)')->field('toggle'),
             ExtensionSettingDefinition::make('notify_restarted', 'notify_restarted', true, ['boolean'])
                 ->label('Server restarted (inferred from uptime)')->field('toggle'),
+            ExtensionSettingDefinition::make('notify_crashed', 'notify_crashed', true, ['boolean'])
+                ->label('Server crashed (experimental log detection)')->field('toggle'),
+            ExtensionSettingDefinition::make('notify_recovered', 'notify_recovered', true, ['boolean'])
+                ->label('Server recovered after detected crash')->field('toggle'),
             ExtensionSettingDefinition::make('notify_failed', 'notify_failed', true, ['boolean'])
                 ->label('Failed operations')->field('toggle'),
         ]));

@@ -1,0 +1,6 @@
+{
+  "panel_url": "https://your-panel.example.com",
+  "node_uuid": "YOUR-PTERODACTYL-NODE-UUID",
+  "node_key": "GENERATED-BY-discord-notifier:node-key",
+  "cursor_file": "/var/lib/discord-wings-agent/cursor"
+}
