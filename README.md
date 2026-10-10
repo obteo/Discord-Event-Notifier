@@ -55,6 +55,8 @@ php artisan discord-notifier:node-key NODE_UUID
 
 The command prints `NODE_UUID` and `NODE_KEY` only once. Put these securely in each Wings node's agent config. Never commit credentials to GitHub. To replace a compromised key use `--rotate` and update the agent config immediately.
 
+**First-time installers:** See [INSTALL_WINGS_AGENT.md](INSTALL_WINGS_AGENT.md) for the complete, copy-and-paste Panel + Wings node installation, signing-key setup, service configuration and troubleshooting. **No v1.3.2 release is required.**
+
 ## Wings node — agent installation
 
 Install Python 3 and ensure `journalctl` is available. Copy `node-agent/wings_crash_agent.py` to `/opt/discord-wings-agent/` and `node-agent/discord-wings-agent.service` to `/etc/systemd/system/`.
